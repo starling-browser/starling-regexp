@@ -1,22 +1,63 @@
 # Starling.RegExp
 
-A pure-managed ECMAScript 2024/2025 regular-expression engine for .NET. Pike-VM
-matcher with a Russ Cox style epsilon closure, a Thompson-NFA compiler, and a
-spec-faithful parser that enforces the §22.2.1.1 early errors.
+A JavaScript-style regular expression engine for .NET. It uses a
+[Pike virtual machine][pikevm] to run the match, [Russ Cox's epsilon
+closure][cox] to walk the state set, a [Thompson NFA][thompson] compiler to
+build the program, and a parser that catches the
+[§22.2.1.1 early errors][ee] at compile time.
 
-Originally extracted from the [Starling browser engine](https://github.com/) — used in
-production to back the JS `RegExp` object.
+Pulled out of the Starling browser engine, where it powers the JavaScript
+`RegExp` object.
 
-## Why not `System.Text.RegularExpressions`?
+[bcl]: https://learn.microsoft.com/dotnet/api/system.text.regularexpressions.regex
+[pikevm]: https://swtch.com/~rsc/regexp/regexp2.html
+[cox]: https://swtch.com/~rsc/regexp/
+[thompson]: https://dl.acm.org/doi/10.1145/363347.363387
+[ee]: https://tc39.es/ecma262/#sec-patterns-static-semantics-early-errors
 
-`Regex` is a great engine, but it follows .NET regex syntax, not the JavaScript
-syntax that the ECMAScript spec defines. The two diverge on real, observable
-things: named-capture syntax, lookbehind quantifiability, the `u` and `v`
-flags, `\p{...}` property escapes, the Annex B legacy rules, `\k<name>`
-behaviour, and the early-error grammar.
+## When to use this
 
-`Starling.RegExp` is built to match the spec, with the early errors enforced at
-parse time so a JS host can surface them as `SyntaxError`.
+Reach for `Starling.RegExp` only if one of these fits:
+
+- You are building a JavaScript engine, browser, or sandbox, and need
+  `RegExp` semantics that match the ECMAScript spec.
+- You are taking a regex pattern that a user wrote as JavaScript (for
+  example, from a web form, a config file, or `package.json`), and the
+  pattern must keep its JavaScript meaning.
+- You need the §22.2.1.1 early errors raised at parse time, so you can
+  surface them as a `SyntaxError` to a JavaScript host.
+- You are testing or teaching ECMAScript regex semantics and want a
+  spec-faithful reference.
+
+## When not to use this
+
+Stick with [`System.Text.RegularExpressions`][bcl] if:
+
+- You are doing general pattern matching in .NET.
+- Your patterns were written for .NET regex syntax.
+- You want the fastest matcher, source generators, or the rich
+  `Regex` / `Match` / `Group` API surface.
+- You do not care which spec your regex follows.
+
+The built-in class is the right default. This library is a niche tool.
+
+## Why the two are not the same
+
+.NET regex and JavaScript regex look alike but are not. They differ in
+ways you can see at runtime:
+
+- how you write a named capture
+- whether you can repeat a lookbehind
+- the `u` and `v` flags
+- `\p{...}` property escapes
+- the Annex B legacy rules
+- how `\k<name>` works
+- which patterns are early errors
+
+If you feed a JavaScript regex pattern to .NET's `Regex` class, some
+patterns will throw, some will parse but match different text, and some
+will match the same text but capture different groups. `Starling.RegExp`
+exists to make those patterns mean what they would mean in a browser.
 
 ## Install
 
@@ -24,7 +65,7 @@ parse time so a JS host can surface them as `SyntaxError`.
 dotnet add package Starling.RegExp
 ```
 
-Targets `net10.0`. Pure managed, no native dependencies.
+Targets `net10.0`.
 
 ## Use
 
@@ -45,8 +86,9 @@ if (m is not null)
 
 ## What it supports
 
-- All eight ES2024 flags: `g i m s u v y d`
-- Named captures, including the ES2025 same-name-across-alternatives rule
+- All eight ECMAScript 2024 flags: `g i m s u v y d`
+- Named captures, including the ECMAScript 2025 same-name-across-alternatives
+  rule
 - Backreferences (numeric and `\k<name>`), with forward references
 - Lookahead and lookbehind, positive and negative
 - `\p{...}` and `\P{...}` for the supported property whitelist
@@ -55,8 +97,8 @@ if (m is not null)
 - Annex B legacy semantics in non-Unicode mode
 - §22.2.1.1 early errors thrown at compile as `RegexSyntaxException`
 
-Matching is linear-time on the common subset. Patterns that use backreferences
-or lookaround fall back to a recursive matcher.
+Matching takes linear time on the common subset. If a pattern uses
+backreferences or lookaround, it falls back to a recursive matcher.
 
 ## Layout
 
@@ -87,4 +129,4 @@ dotnet test
 
 ## License
 
-TBD.
+BSD 2-Clause. See [`LICENSE`](LICENSE).
