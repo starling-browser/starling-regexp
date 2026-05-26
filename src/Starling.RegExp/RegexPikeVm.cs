@@ -165,9 +165,9 @@ public sealed class RegexPikeVm
     {
         // Split's lower-priority branch is parked on a heap-allocated stack
         // instead of via native recursion. A deeply chained regex (e.g. a
-        // long run of `(?:|x)` from minified site code) would otherwise blow
-        // the native stack — once per epsilon Split — before the JS engine's
-        // logical call-stack guard in JsVm could fire.
+        // long run of `(?:|x)` from minified web code) would otherwise blow
+        // the native stack — once per epsilon Split — well before any
+        // caller-side recursion guard could fire.
         Stack<Thread>? deferred = null;
         while (true)
         {
