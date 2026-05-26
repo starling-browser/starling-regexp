@@ -204,9 +204,9 @@ public class RegexPikeVmTests
         // (empty branch) flows directly into the next Split, so the
         // epsilon-closure walk that AddThread performs recurses once per
         // group. Pre-fix AddThread used true recursion on the Arg1 branch,
-        // overflowing the native stack at depths well below the JS engine's
-        // logical call-stack guard. Run on a small-stack worker so the
-        // regression is caught regardless of the main test thread's stack.
+        // overflowing the native stack on long chains. Run on a small-stack
+        // worker so the regression is caught regardless of the main test
+        // thread's stack.
         const int reps = 8000;
         var sb = new System.Text.StringBuilder(reps * 6);
         for (var i = 0; i < reps; i++) sb.Append("(?:|a)");
