@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Starling.RegExp/Starling.RegExp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Starling.RegExp.Tests/Starling.RegExp.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Starling.RegExp</PackageId>
+    <Description>Pure-managed ECMAScript 2024/2025 regular-expression engine. Pike VM matcher with a spec-faithful parser that enforces the §22.2.1.1 early errors.</Description>
+    <PackageTags>regex;regexp;ecmascript;javascript;js;pike-vm</PackageTags>
+    <Authors>Cody Mullins</Authors>
+  </PropertyGroup>
+</Project>
