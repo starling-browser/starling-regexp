@@ -241,7 +241,10 @@ public sealed class RegexParser
                 return ParseClass();
             case '\\':
                 return ParseEscape();
-            case '*': case '+': case '?': case '|':
+            case '*':
+            case '+':
+            case '?':
+            case '|':
                 throw new RegexSyntaxException($"Unexpected '{c}' at index {_i}");
             case '{':
                 {
@@ -263,7 +266,8 @@ public sealed class RegexParser
                         throw new RegexSyntaxException($"Lone quantifier brace '{{' at index {_i}");
                     goto default;
                 }
-            case '}': case ']':
+            case '}':
+            case ']':
                 // Annex B §B.1.2: with neither the `u` nor `v` flag, `}` `]` that
                 // don't close a class are ExtendedPatternCharacters — ordinary
                 // literals. Real-world bundles depend on this. Under
@@ -527,7 +531,8 @@ public sealed class RegexParser
                 case 'W': _i++; AddNegatedRanges(ranges, RegexCharClass.Word()); return null;
                 case 's': _i++; foreach (var r in RegexCharClass.Whitespace()) ranges.Add(r); return null;
                 case 'S': _i++; AddNegatedRanges(ranges, RegexCharClass.Whitespace()); return null;
-                case 'p': case 'P':
+                case 'p':
+                case 'P':
                     _i++;
                     nested.Add(ParsePropertyEscape(esc == 'P'));
                     return null;
@@ -636,7 +641,8 @@ public sealed class RegexParser
             case 'W': _i++; return new CharClassNode(new RegexCharClass(RegexCharClass.Word(), true, false));
             case 's': _i++; return new CharClassNode(new RegexCharClass(RegexCharClass.Whitespace(), false, false));
             case 'S': _i++; return new CharClassNode(new RegexCharClass(RegexCharClass.Whitespace(), true, false));
-            case 'p': case 'P':
+            case 'p':
+            case 'P':
                 {
                     var negated = c == 'P';
                     _i++;

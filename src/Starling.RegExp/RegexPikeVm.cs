@@ -133,7 +133,7 @@ public sealed class RegexPikeVm
                 }
                 if (!consumed) { /* discarded — non-consuming ops were already expanded by AddThread */ }
             }
-            AfterCurr:
+        AfterCurr:
             // If we already matched at this position and there are no further
             // higher-priority continuations queued in next, stop here.
             if (pos >= input.Length) break;
@@ -440,7 +440,7 @@ public sealed class RegexPikeVm
                 }
             }
             // pc ran off the end without a Match instruction — treat as failure.
-            Fail:
+        Fail:
             if (backtrack is null || backtrack.Count == 0)
             {
                 outSlots = slots;
