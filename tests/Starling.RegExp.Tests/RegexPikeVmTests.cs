@@ -198,6 +198,32 @@ public class RegexPikeVmTests
     }
 
     [TestMethod]
+    public void SlowMatcher_googleClosure_uri_regex_on_long_input_does_not_overflow_native_stack()
+    {
+        // Google Closure's goog.uri.utils.split URL parser. The `(?=...)` lookahead
+        // forces HasBackrefOrLookaround → slow recursive matcher. On a long uniform
+        // payload (e.g. Google's `am=AAAA...` xjs URLs, ~2 KB) the recursive Split
+        // at RegexPikeVm.cs:311 backtracks one character at a time, recursing once
+        // per char and blowing the native stack. Real crash repro: loading
+        // https://www.google.com via the headless renderer.
+        const string pattern =
+            "^(?:([^:/?#.]+):)?(?://(?:([^\\/?#]*)@)?([^\\/?#]*?)" +
+            "(?::([0-9]+))?(?=[\\/?#]|$))?([^?#]+)?(?:\\?([^#]*))?(?:#([\\s\\S]*))?$";
+        var input = "/" + new string('A', 2000);
+
+        Exception? failure = null;
+        var worker = new System.Threading.Thread(() =>
+        {
+            try { Run(pattern, "", input); }
+            catch (Exception ex) { failure = ex; }
+        }, maxStackSize: 256 * 1024);
+        worker.Start();
+        worker.Join();
+
+        failure.Should().BeNull();
+    }
+
+    [TestMethod]
     public void AddThread_split_chain_does_not_overflow_native_stack()
     {
         // Each (?:|a) compiles to Split(jmp-to-next, char). The Arg1 path
