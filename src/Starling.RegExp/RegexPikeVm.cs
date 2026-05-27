@@ -269,9 +269,9 @@ public sealed class RegexPikeVm
     }
 
     // ------------------------------------------------------------------
-    //          Slow recursive matcher (backrefs + lookarounds)
+    //          Slow backtracking matcher (backrefs + lookarounds)
     // ------------------------------------------------------------------
-    /// <summary>Recursive-descent matcher. Quadratic worst-case but supports
+    /// <summary>Backtracking matcher. Exponential worst-case but supports
     /// backreferences and lookarounds. Used only when the pattern contains
     /// those constructs.</summary>
     private RegexMatch? ExecSlow(string input, int start)
@@ -286,146 +286,170 @@ public sealed class RegexPikeVm
         return null;
     }
 
+    // Split's lower-priority branch is parked on a heap-allocated backtrack
+    // stack instead of via native recursion. A regex with deeply nested
+    // alternation or quantifiers (e.g. Google Closure's URL parser against a
+    // long uniform payload) backs up one character per failed branch — pre-fix
+    // that ran one native frame per char and blew the thread stack well before
+    // any caller-side guard could fire. Lookaround still recurses for the
+    // sub-program, but each sub-call has its own backtrack stack, so depth is
+    // bounded by static lookaround nesting in the pattern.
     private bool TryMatch(RegexProgram prog, string input, int pos, int pc, int[] slots,
         out int endPos, out int[] outSlots)
     {
         endPos = -1;
         outSlots = slots;
         var code = prog.Code;
-        while (pc < code.Count)
+        Stack<(int Pos, int Pc, int[] Slots)>? backtrack = null;
+
+        while (true)
         {
-            var ins = code[pc];
-            switch (ins.Op)
+            while (pc < code.Count)
             {
-                case RegexOp.Match:
-                    endPos = pos;
-                    outSlots = slots;
-                    return true;
-                case RegexOp.Jmp:
-                    pc = ins.Arg1;
-                    continue;
-                case RegexOp.Split:
-                    {
-                        // Try Arg1 first; if it fails, try Arg2.
-                        var save = (int[])slots.Clone();
-                        if (TryMatch(prog, input, pos, ins.Arg1, save, out endPos, out outSlots))
-                            return true;
-                        pc = ins.Arg2;
+                var ins = code[pc];
+                switch (ins.Op)
+                {
+                    case RegexOp.Match:
+                        endPos = pos;
+                        outSlots = slots;
+                        return true;
+                    case RegexOp.Jmp:
+                        pc = ins.Arg1;
                         continue;
-                    }
-                case RegexOp.SaveStart:
-                    slots[ins.Arg1 * 2] = pos;
-                    pc++;
-                    continue;
-                case RegexOp.SaveEnd:
-                    slots[ins.Arg1 * 2 + 1] = pos;
-                    pc++;
-                    continue;
-                case RegexOp.AssertStart:
-                    if (pos == 0 || ((_flags & RegexFlags.Multiline) != 0 && pos > 0
-                        && RegexCharClass.IsLineTerminator(input[pos - 1])))
-                    {
-                        pc++;
-                        continue;
-                    }
-                    return false;
-                case RegexOp.AssertEnd:
-                    if (pos == input.Length || ((_flags & RegexFlags.Multiline) != 0 && pos < input.Length
-                        && RegexCharClass.IsLineTerminator(input[pos])))
-                    {
-                        pc++;
-                        continue;
-                    }
-                    return false;
-                case RegexOp.AssertWordBoundary:
-                    if (IsWordBoundary(input, pos)) { pc++; continue; }
-                    return false;
-                case RegexOp.AssertNonWordBoundary:
-                    if (!IsWordBoundary(input, pos)) { pc++; continue; }
-                    return false;
-                case RegexOp.Char:
-                    if (pos < input.Length && input[pos] == ins.Arg1) { pos++; pc++; continue; }
-                    return false;
-                case RegexOp.CharIgnoreCase:
-                    if (pos < input.Length && CaseFoldEquals(input[pos], ins.Arg1)) { pos++; pc++; continue; }
-                    return false;
-                case RegexOp.CharClass:
-                    if (pos < input.Length && prog.Klasses[ins.Arg1].Contains(input[pos]))
-                    {
-                        pos++; pc++; continue;
-                    }
-                    return false;
-                case RegexOp.Any:
-                    if (pos < input.Length) { pos++; pc++; continue; }
-                    return false;
-                case RegexOp.AnyExceptNewline:
-                    if (pos < input.Length && !RegexCharClass.IsLineTerminator(input[pos]))
-                    {
-                        pos++; pc++; continue;
-                    }
-                    return false;
-                case RegexOp.Backref:
-                    {
-                        var idx = ins.Arg1;
-                        if (idx * 2 + 1 >= slots.Length) return false;
-                        var s = slots[idx * 2];
-                        var e = slots[idx * 2 + 1];
-                        if (s < 0 || e < 0)
+                    case RegexOp.Split:
                         {
-                            // Matches empty string when not yet captured.
+                            // Park Arg2 with a snapshot of slots; pursue Arg1 in place.
+                            backtrack ??= new Stack<(int, int, int[])>();
+                            backtrack.Push((pos, ins.Arg2, (int[])slots.Clone()));
+                            pc = ins.Arg1;
+                            continue;
+                        }
+                    case RegexOp.SaveStart:
+                        slots[ins.Arg1 * 2] = pos;
+                        pc++;
+                        continue;
+                    case RegexOp.SaveEnd:
+                        slots[ins.Arg1 * 2 + 1] = pos;
+                        pc++;
+                        continue;
+                    case RegexOp.AssertStart:
+                        if (pos == 0 || ((_flags & RegexFlags.Multiline) != 0 && pos > 0
+                            && RegexCharClass.IsLineTerminator(input[pos - 1])))
+                        {
                             pc++;
                             continue;
                         }
-                        var len = e - s;
-                        if (pos + len > input.Length) return false;
-                        for (var k = 0; k < len; k++)
+                        goto Fail;
+                    case RegexOp.AssertEnd:
+                        if (pos == input.Length || ((_flags & RegexFlags.Multiline) != 0 && pos < input.Length
+                            && RegexCharClass.IsLineTerminator(input[pos])))
                         {
-                            var a = input[s + k];
-                            var b = input[pos + k];
-                            if ((_flags & RegexFlags.IgnoreCase) != 0)
-                            {
-                                if (!CaseFoldEquals(a, b)) return false;
-                            }
-                            else if (a != b) return false;
+                            pc++;
+                            continue;
                         }
-                        pos += len;
-                        pc++;
-                        continue;
-                    }
-                case RegexOp.Lookaround:
-                    {
-                        var sub = prog.Subs[ins.Arg1];
-                        bool negative = (ins.Arg2 & 1) != 0;
-                        bool behind = (ins.Arg2 & 2) != 0;
-                        bool matched;
-                        if (behind)
+                        goto Fail;
+                    case RegexOp.AssertWordBoundary:
+                        if (IsWordBoundary(input, pos)) { pc++; continue; }
+                        goto Fail;
+                    case RegexOp.AssertNonWordBoundary:
+                        if (!IsWordBoundary(input, pos)) { pc++; continue; }
+                        goto Fail;
+                    case RegexOp.Char:
+                        if (pos < input.Length && input[pos] == ins.Arg1) { pos++; pc++; continue; }
+                        goto Fail;
+                    case RegexOp.CharIgnoreCase:
+                        if (pos < input.Length && CaseFoldEquals(input[pos], ins.Arg1)) { pos++; pc++; continue; }
+                        goto Fail;
+                    case RegexOp.CharClass:
+                        if (pos < input.Length && prog.Klasses[ins.Arg1].Contains(input[pos]))
                         {
-                            // Try matches that end at pos. Scan starting positions
-                            // from 0 to pos.
-                            matched = false;
-                            for (var i = 0; i <= pos; i++)
+                            pos++; pc++; continue;
+                        }
+                        goto Fail;
+                    case RegexOp.Any:
+                        if (pos < input.Length) { pos++; pc++; continue; }
+                        goto Fail;
+                    case RegexOp.AnyExceptNewline:
+                        if (pos < input.Length && !RegexCharClass.IsLineTerminator(input[pos]))
+                        {
+                            pos++; pc++; continue;
+                        }
+                        goto Fail;
+                    case RegexOp.Backref:
+                        {
+                            var idx = ins.Arg1;
+                            if (idx * 2 + 1 >= slots.Length) goto Fail;
+                            var s = slots[idx * 2];
+                            var e = slots[idx * 2 + 1];
+                            if (s < 0 || e < 0)
+                            {
+                                // Matches empty string when not yet captured.
+                                pc++;
+                                continue;
+                            }
+                            var len = e - s;
+                            if (pos + len > input.Length) goto Fail;
+                            var brMatched = true;
+                            for (var k = 0; k < len; k++)
+                            {
+                                var a = input[s + k];
+                                var b = input[pos + k];
+                                if ((_flags & RegexFlags.IgnoreCase) != 0)
+                                {
+                                    if (!CaseFoldEquals(a, b)) { brMatched = false; break; }
+                                }
+                                else if (a != b) { brMatched = false; break; }
+                            }
+                            if (!brMatched) goto Fail;
+                            pos += len;
+                            pc++;
+                            continue;
+                        }
+                    case RegexOp.Lookaround:
+                        {
+                            var sub = prog.Subs[ins.Arg1];
+                            bool negative = (ins.Arg2 & 1) != 0;
+                            bool behind = (ins.Arg2 & 2) != 0;
+                            bool matched;
+                            if (behind)
+                            {
+                                // Try matches that end at pos. Scan starting positions
+                                // from 0 to pos.
+                                matched = false;
+                                for (var i = 0; i <= pos; i++)
+                                {
+                                    var subSlots = new int[(sub.CaptureCount + 1) * 2];
+                                    for (var k = 0; k < subSlots.Length; k++) subSlots[k] = -1;
+                                    if (TryMatch(sub, input, i, 0, subSlots, out var endP, out _) && endP == pos)
+                                    {
+                                        matched = true; break;
+                                    }
+                                }
+                            }
+                            else
                             {
                                 var subSlots = new int[(sub.CaptureCount + 1) * 2];
                                 for (var k = 0; k < subSlots.Length; k++) subSlots[k] = -1;
-                                if (TryMatch(sub, input, i, 0, subSlots, out var endP, out _) && endP == pos)
-                                {
-                                    matched = true; break;
-                                }
+                                matched = TryMatch(sub, input, pos, 0, subSlots, out _, out _);
                             }
+                            if (matched != negative) { pc++; continue; }
+                            goto Fail;
                         }
-                        else
-                        {
-                            var subSlots = new int[(sub.CaptureCount + 1) * 2];
-                            for (var k = 0; k < subSlots.Length; k++) subSlots[k] = -1;
-                            matched = TryMatch(sub, input, pos, 0, subSlots, out _, out _);
-                        }
-                        if (matched != negative) { pc++; continue; }
-                        return false;
-                    }
-                default:
-                    return false;
+                    default:
+                        goto Fail;
+                }
             }
+            // pc ran off the end without a Match instruction — treat as failure.
+            Fail:
+            if (backtrack is null || backtrack.Count == 0)
+            {
+                outSlots = slots;
+                return false;
+            }
+            var bt = backtrack.Pop();
+            pos = bt.Pos;
+            pc = bt.Pc;
+            slots = bt.Slots;
         }
-        return false;
     }
 }
