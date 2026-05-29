@@ -384,7 +384,7 @@ public sealed class RegexParser
                 if (_i + 1 >= _src.Length || _src[_i + 1] != 'u')
                     throw new RegexSyntaxException("Invalid escape in capture group name");
                 _i += 2; // past "\u"
-                cp = ParseUnicodeEscape();
+                cp = ParseUnicodeEscapeSequence();
             }
             else
             {
@@ -544,7 +544,7 @@ public sealed class RegexParser
                 case '0': _i++; return 0;
                 case 'b': _i++; return 0x08; // backspace in class
                 case 'x': _i++; return ParseHex(2);
-                case 'u': _i++; return ParseUnicodeEscape();
+                case 'u': _i++; return ParseUnicodeEscapeSequence();
                 case 'c': _i++; return ParseControlChar();
                 default:
                     // §22.2.1 (u/v): only IdentityEscape characters
@@ -665,7 +665,7 @@ public sealed class RegexParser
                 }
                 return new LiteralNode(0);
             case 'x': _i++; return new LiteralNode(ParseHex(2));
-            case 'u': _i++; return new LiteralNode(ParseUnicodeEscape());
+            case 'u': _i++; return new LiteralNode(ParseUnicodeEscapeSequence());
             case 'c': _i++; return new LiteralNode(ParseControlChar());
             case 'k':
                 {
@@ -726,11 +726,21 @@ public sealed class RegexParser
         return v;
     }
 
-    private int ParseUnicodeEscape()
+    private int ParseUnicodeEscapeSequence()
+    {
+        var cp = ParseUnicodeEscape(out var braced);
+        if (_unicode && !braced && IsLeadSurrogate(cp) && TryConsumeTrailingSurrogateEscape(out var trail))
+            return char.ConvertToUtf32((char)cp, (char)trail);
+        return cp;
+    }
+
+    private int ParseUnicodeEscape(out bool braced)
     {
         // \u{HHHH...} (u flag) or \uHHHH
+        braced = false;
         if (_unicode && _i < _src.Length && _src[_i] == '{')
         {
+            braced = true;
             _i++;
             var start = _i;
             while (_i < _src.Length && _src[_i] != '}') _i++;
@@ -746,6 +756,43 @@ public sealed class RegexParser
             return v;
         }
         return ParseHex(4);
+    }
+
+    private bool TryConsumeTrailingSurrogateEscape(out int trail)
+    {
+        trail = 0;
+        if (_i + 5 >= _src.Length || _src[_i] != '\\' || _src[_i + 1] != 'u')
+            return false;
+        if (!TryParseFixedHex(_i + 2, out var value) || !IsTrailSurrogate(value))
+            return false;
+        _i += 6;
+        trail = value;
+        return true;
+    }
+
+    private bool TryParseFixedHex(int start, out int value)
+    {
+        value = 0;
+        if (start + 4 > _src.Length) return false;
+        for (var j = 0; j < 4; j++)
+        {
+            var digit = HexValue(_src[start + j]);
+            if (digit < 0) return false;
+            value = (value << 4) | digit;
+        }
+        return true;
+    }
+
+    private static bool IsLeadSurrogate(int cp) => cp >= 0xD800 && cp <= 0xDBFF;
+
+    private static bool IsTrailSurrogate(int cp) => cp >= 0xDC00 && cp <= 0xDFFF;
+
+    private static int HexValue(char c)
+    {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
     }
 
     private int ParseControlChar()

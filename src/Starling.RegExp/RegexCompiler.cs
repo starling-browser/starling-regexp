@@ -6,6 +6,7 @@ public sealed class RegexCompiler
     private readonly List<RegexInst> _code = new();
     private readonly List<RegexCharClass> _klasses = new();
     private readonly List<RegexProgram> _subs = new();
+    private readonly RegexFlags _flags;
     private readonly bool _ignoreCase;
     private readonly bool _captureGroups;
     private readonly int _captureCount;
@@ -13,6 +14,7 @@ public sealed class RegexCompiler
 
     public RegexCompiler(RegexFlags flags, int captureCount, IReadOnlyDictionary<string, int> named, bool captureGroups = true)
     {
+        _flags = flags;
         _ignoreCase = (flags & RegexFlags.IgnoreCase) != 0;
         _captureGroups = captureGroups;
         _captureCount = captureCount;
@@ -113,8 +115,7 @@ public sealed class RegexCompiler
             case LookaroundNode la:
                 {
                     // Compile sub-program with the same flags/captures inherited.
-                    var subCompiler = new RegexCompiler(_ignoreCase ? RegexFlags.IgnoreCase : RegexFlags.None,
-                        _captureCount, _namedCaptures, captureGroups: false);
+                    var subCompiler = new RegexCompiler(_flags, _captureCount, _namedCaptures, captureGroups: false);
                     var subProg = subCompiler.Compile(la.Child);
                     var subIdx = AddSub(subProg);
                     int arg2 = (la.Negative ? 1 : 0) | (la.Behind ? 2 : 0);

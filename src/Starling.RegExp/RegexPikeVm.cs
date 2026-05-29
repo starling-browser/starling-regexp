@@ -28,7 +28,8 @@ public sealed class RegexPikeVm
         bool needSlow = HasBackrefOrLookaround(_prog);
 
         int maxStart = sticky ? start : input.Length;
-        for (var pos = start; pos <= maxStart; pos++)
+        var pos = start;
+        while (pos <= maxStart)
         {
             RegexMatch? m;
             if (needSlow)
@@ -37,8 +38,40 @@ public sealed class RegexPikeVm
                 m = ExecPike(input, pos);
             if (m is not null) return m;
             if (sticky) return null;
+            pos = AdvanceInputIndex(input, pos);
         }
         return null;
+    }
+
+    private int AdvanceInputIndex(string input, int index)
+    {
+        if (((_flags & (RegexFlags.Unicode | RegexFlags.UnicodeSets)) == 0)
+            || index + 1 >= input.Length
+            || !char.IsHighSurrogate(input[index])
+            || !char.IsLowSurrogate(input[index + 1]))
+            return index + 1;
+        return index + 2;
+    }
+
+    private int CodePointAt(string input, int pos, out int charLen)
+    {
+        if (pos >= input.Length)
+        {
+            charLen = 0;
+            return -1;
+        }
+
+        int cp = input[pos];
+        charLen = 1;
+        if (((_flags & (RegexFlags.Unicode | RegexFlags.UnicodeSets)) != 0)
+            && char.IsHighSurrogate(input[pos])
+            && pos + 1 < input.Length
+            && char.IsLowSurrogate(input[pos + 1]))
+        {
+            cp = char.ConvertToUtf32(input[pos], input[pos + 1]);
+            charLen = 2;
+        }
+        return cp;
     }
 
     private static bool HasBackrefOrLookaround(RegexProgram p)
@@ -355,26 +388,41 @@ public sealed class RegexPikeVm
                         if (!IsWordBoundary(input, pos)) { pc++; continue; }
                         goto Fail;
                     case RegexOp.Char:
-                        if (pos < input.Length && input[pos] == ins.Arg1) { pos++; pc++; continue; }
-                        goto Fail;
+                        {
+                            var cp = CodePointAt(input, pos, out var charLen);
+                            if (cp >= 0 && cp == ins.Arg1) { pos += charLen; pc++; continue; }
+                            goto Fail;
+                        }
                     case RegexOp.CharIgnoreCase:
-                        if (pos < input.Length && CaseFoldEquals(input[pos], ins.Arg1)) { pos++; pc++; continue; }
-                        goto Fail;
+                        {
+                            var cp = CodePointAt(input, pos, out var charLen);
+                            if (cp >= 0 && CaseFoldEquals(cp, ins.Arg1)) { pos += charLen; pc++; continue; }
+                            goto Fail;
+                        }
                     case RegexOp.CharClass:
-                        if (pos < input.Length && prog.Klasses[ins.Arg1].Contains(input[pos]))
                         {
-                            pos++; pc++; continue;
+                            var cp = CodePointAt(input, pos, out var charLen);
+                            if (cp >= 0 && prog.Klasses[ins.Arg1].Contains(cp))
+                            {
+                                pos += charLen; pc++; continue;
+                            }
+                            goto Fail;
                         }
-                        goto Fail;
                     case RegexOp.Any:
-                        if (pos < input.Length) { pos++; pc++; continue; }
-                        goto Fail;
-                    case RegexOp.AnyExceptNewline:
-                        if (pos < input.Length && !RegexCharClass.IsLineTerminator(input[pos]))
                         {
-                            pos++; pc++; continue;
+                            var cp = CodePointAt(input, pos, out var charLen);
+                            if (cp >= 0) { pos += charLen; pc++; continue; }
+                            goto Fail;
                         }
-                        goto Fail;
+                    case RegexOp.AnyExceptNewline:
+                        {
+                            var cp = CodePointAt(input, pos, out var charLen);
+                            if (cp >= 0 && !RegexCharClass.IsLineTerminator(cp))
+                            {
+                                pos += charLen; pc++; continue;
+                            }
+                            goto Fail;
+                        }
                     case RegexOp.Backref:
                         {
                             var idx = ins.Arg1;
